@@ -13,6 +13,6 @@ Created on Thu Feb  8 19:45:06 2018
 """
 
 x=1 #
-print(id(x))
+print(id(x)) #return identity of x
 x+=1
 print(id(x))
