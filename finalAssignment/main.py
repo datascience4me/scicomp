@@ -18,7 +18,10 @@ draw some graphs based on the data.
 import os
 import functions as fn
 import numpy as np
+import numpy.linalg as lin
 import scipy.io as sio
+import matplotlib.pyplot as plt
+
    
 # change working directory to that with the data files
 oldFolder = os.getcwd()
@@ -27,27 +30,29 @@ os.chdir(dataFilesFolder)
 
 filters = [2710, 3060, 3220, 4270, 4740, 5756] # filters used in measurement
 controlData = []
-controlDataStd = []
 sampleData = []
-sampleDataStd = []
 
 # read data files and save data to containers
 for filter in filters :
     FileName = 'saatomittaus-' + str( filter ) + '.txt'
     data = fn.readFile(FileName)
-    data = fn.cutData( data, 180 )
+    data = np.mean(fn.cutData( data, 180 ))
     controlData.append(data)
-    controlDataStd.append(np.std(data))
     
     FileName = 'nayteputki-' + str( filter ) + '.txt'
     data = fn.readFile(FileName)
-    data = fn.cutData( data, 180 )
-    sampleData.append(data)
-    sampleDataStd.append(np.std(data))
+    data = np.mean(fn.cutData( data, 180 ))
+    
+    # sample data should never be a higher value than control data, because
+    # the filters will absorb some of the incident light
+    if controlData[-1] < data:
+        sampleData.append(controlData[-1])
+    else:        
+        sampleData.append(data)
     
 os.chdir(oldFolder)
 
-# load the absorption vectors of the gases and filters
+# load the absorption vectors of the gases and filters from .mat files,
 # squeeze_me squeezes unit matrix dimensions 
 gases = sio.loadmat('gases.mat', squeeze_me=True)
 absorptions = sio.loadmat('filterAbsorbtion.mat', squeeze_me=True)
@@ -62,8 +67,46 @@ L=0.2           # m, length of sample tube
 # wavelength
 wavelen = wavelen['lambda']
 dwavelen = np.abs(np.diff(wavelen)) 
+dwavelen = np.append(dwavelen, dwavelen[-1])
 
-gases = [gases['H2O'], gases['CO'], gases['C2H2'], gases['CO2'], gases['CH4']]
+# set the absorption vectors of the gases and filters
+gasnames = ['H2O', 'CO', 'C2H2', 'CO2', 'CH4']
+gases = [gases[gasname] for gasname in gasnames]
+absorptions = [absorptions['NB'+str(filter)] for filter in filters]
+
+# the concentrations are solved by multivariable calculus
+# for this we define the matrix coefficients
+A = np.zeros([len(absorptions), len(gases)])
+for i in range(len(absorptions)):
+    for j in range(len(gases)):
+        alpha = np.sum( np.multiply( np.multiply(gases[j], absorptions[i]),
+                                    dwavelen)*1e-2 )
+        A[i,j] = alpha
 
 
+A = A*p/(k*T)/1e4*L
 
+I0 = controlData
+I = sampleData
+
+Y = np.zeros([len(absorptions),1])
+for i in range(len(absorptions)):
+    y = ( 1-I[i]/I0[i] )*np.sum( np.multiply(absorptions[i], dwavelen*1e-2))
+    Y[i,0] = y
+    
+# solving the concentrations from the matrix equation    
+C = lin.solve(A.T.dot(A), A.T.dot(Y))
+C = np.squeeze(C)
+
+# print results
+print('Concentration of gases in sample tube:')
+for i in range(len(C)):
+    c = C[i]*1e6
+    print(gasnames[i], ': ', '%.2f' % c, ' ppm', sep='')
+
+# bar plot of results
+x = np.arange(5)
+plt.bar(x,C*1e6)
+plt.xticks(x, gasnames)
+plt.xlabel('Gas')
+plt.ylabel('Concentration (ppm)')
